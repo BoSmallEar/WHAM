@@ -14,12 +14,10 @@ from lib.utils.imutils import compute_cam_intrinsics
 
 KEYPOINTS_THR = 0.3
 
-def convert_dpvo_to_cam_angvel(traj, fps):
+def convert_dpvo_to_cam_angvel(traj, fps, frame_ids):
     """Function to convert DPVO trajectory output to camera angular velocity"""
-    
     # 0 ~ 3: translation, 3 ~ 7: Quaternion
     quat = traj[:, 3:]
-    
     # Convert (x,y,z,q) to (q,x,y,z)
     quat = quat[:, [3, 0, 1, 2]]
     
@@ -37,6 +35,7 @@ def convert_dpvo_to_cam_angvel(traj, fps):
     cam_angvel = cam_angvel - torch.tensor([[1, 0, 0, 0, 1, 0]]).to(cam_angvel) # Normalize
     cam_angvel = cam_angvel * fps
     cam_angvel = torch.cat((cam_angvel, cam_angvel[:1]), dim=0)
+    cam_angvel = cam_angvel[frame_ids]
     return cam_angvel
 
 
@@ -91,7 +90,7 @@ class CustomDataset(torch.utils.data.Dataset):
         init_root = transforms.matrix_to_rotation_6d(init_output.global_orient)
         
         # Process SLAM results
-        cam_angvel = convert_dpvo_to_cam_angvel(self.slam_results, self.fps)
+        cam_angvel = convert_dpvo_to_cam_angvel(self.slam_results, self.fps,  self.tracking_results[index]['frame_id'])
         
         return (
             index,                                          # subject id

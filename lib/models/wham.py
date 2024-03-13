@@ -162,5 +162,5 @@ class Network(nn.Module):
             
         output = self.trajectory_refiner(old_motion_context, update_vel, output, cam_angvel, return_y_up=return_y_up)
         # --------- #
-        
+        output["contact"] = pred_contact.squeeze(0)
         return output

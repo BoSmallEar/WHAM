@@ -1,0 +1,8 @@
+results
+checkpoints
+*.pyc
+dataset
+examples
+logs
+output
+experiments

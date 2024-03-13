@@ -9,6 +9,8 @@ import torch
 import torch.nn as nn
 import scipy.signal as signal
 from progress.bar import Bar
+import cv2
+from functools import reduce
 
 from ultralytics import YOLO
 from mmpose.apis import (
@@ -26,22 +28,31 @@ BBOX_CONF = 0.5
 TRACKING_THR = 0.1
 MINIMUM_FRMAES = 30
 MINIMUM_JOINTS = 6
+MINIMUM_JOINTS_2 = 15
+
 
 class DetectionModel(object):
+
     def __init__(self, device):
-        
+
         # ViTPose
-        pose_model_cfg = osp.join(VIT_DIR, 'configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/ViTPose_huge_coco_256x192.py')
-        pose_model_ckpt = osp.join(ROOT_DIR, 'checkpoints', 'vitpose-h-multi-coco.pth')
-        self.pose_model = init_pose_model(pose_model_cfg, pose_model_ckpt, device=device.lower())
-        
+        pose_model_cfg = osp.join(
+            VIT_DIR,
+            'configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/ViTPose_huge_coco_256x192.py'
+        )
+        pose_model_ckpt = osp.join(ROOT_DIR, 'checkpoints',
+                                   'vitpose-h-multi-coco.pth')
+        self.pose_model = init_pose_model(pose_model_cfg,
+                                          pose_model_ckpt,
+                                          device=device.lower())
+
         # YOLO
-        bbox_model_ckpt = osp.join(ROOT_DIR, 'checkpoints', 'yolov8x.pt')
+        bbox_model_ckpt = osp.join(ROOT_DIR, 'checkpoints', 'yolov8x-seg.pt')
         self.bbox_model = YOLO(bbox_model_ckpt)
-        
+
         self.device = device
         self.initialize_tracking()
-        
+
     def initialize_tracking(self, ):
         self.next_id = 0
         self.frame_id = 0
@@ -52,37 +63,48 @@ class DetectionModel(object):
             'bbox': [],
             'keypoints': []
         }
-        
+
     def xyxy_to_cxcys(self, bbox, s_factor=1.05):
         cx, cy = bbox[[0, 2]].mean(), bbox[[1, 3]].mean()
         scale = max(bbox[2] - bbox[0], bbox[3] - bbox[1]) / 200 * s_factor
         return np.array([[cx, cy, scale]])
-        
+
     def compute_bboxes_from_keypoints(self, s_factor=1.2):
         X = self.tracking_results['keypoints'].copy()
         mask = X[..., -1] > VIS_THRESH
 
         bbox = np.zeros((len(X), 3))
         for i, (kp, m) in enumerate(zip(X, mask)):
-            bb = [kp[m, 0].min(), kp[m, 1].min(),
-                  kp[m, 0].max(), kp[m, 1].max()]
-            cx, cy = [(bb[2]+bb[0])/2, (bb[3]+bb[1])/2]
+            bb = [
+                kp[m, 0].min(), kp[m, 1].min(), kp[m, 0].max(), kp[m, 1].max()
+            ]
+            cx, cy = [(bb[2] + bb[0]) / 2, (bb[3] + bb[1]) / 2]
             bb_w = bb[2] - bb[0]
             bb_h = bb[3] - bb[1]
             s = np.stack((bb_w, bb_h)).max()
             bb = np.array((cx, cy, s))
             bbox[i] = bb
-        
+
         bbox[:, 2] = bbox[:, 2] * s_factor / 200.0
         self.tracking_results['bbox'] = bbox
-    
+
     def track(self, img, fps, length):
-        
+
         # bbox detection
-        bboxes = self.bbox_model.predict(
-            img, device=self.device, classes=0, conf=BBOX_CONF, save=False, verbose=False)[0].boxes.xyxy.detach().cpu().numpy()
-        bboxes = [{'bbox': bbox} for bbox in bboxes]
+        results = self.bbox_model.predict(
+            img,
+            device=self.device,
+            classes=0,
+            conf=BBOX_CONF,
+            save=False,
+            verbose=False)[0]
         
+        bboxes = results.boxes.xyxy.detach().cpu().numpy()
+        bboxes = [{'bbox': bbox} for bbox in bboxes]
+        if results.masks is not None:
+            masks = results.masks.xy
+    
+
         # keypoints detection
         pose_results, returned_outputs = inference_top_down_pose_model(
             self.pose_model,
@@ -92,37 +114,59 @@ class DetectionModel(object):
             return_heatmap=False,
             outputs=None)
         
-        # person identification
-        pose_results, self.next_id = get_track_id(
-            pose_results,
-            self.pose_results_last,
-            self.next_id,
-            use_oks=False,
-            tracking_thr=TRACKING_THR,
-            use_one_euro=True,
-            fps=fps)
-        
-        for pose_result in pose_results:
+        # filter pose results based on conf and mask
+        remove_idx = []
+        for i, pose_result in enumerate(pose_results):
             n_valid = (pose_result['keypoints'][:, -1] > VIS_THRESH).sum()
-            if n_valid < MINIMUM_JOINTS: continue
-            
+            if n_valid < MINIMUM_JOINTS:
+                remove_idx.append(i) 
+                continue
+            mask = masks[i].astype(int)
+            real_mask = np.zeros([img.shape[0], img.shape[1]], dtype=np.uint8)
+            if mask.shape[0] == 0:
+                remove_idx.append(i) 
+                continue
+            cv2.drawContours(real_mask,[mask],-1,255,cv2.FILLED)
+            real_mask = real_mask.astype(bool)
+            pose_result_int = pose_result['keypoints'][:, :-1].astype(int)
+            pose_result_int_mask = reduce(np.logical_and,[pose_result_int[..., 1]>=0, pose_result_int[...,1]<img.shape[0], pose_result_int[...,0]>=0, pose_result_int[..., 0]<img.shape[1]])
+            pose_result_int = pose_result_int[pose_result_int_mask]
+            n_valid = (real_mask[pose_result_int[..., 1], pose_result_int[..., 0]]).sum()
+            if n_valid < MINIMUM_JOINTS_2:
+                remove_idx.append(i) 
+        
+        for idx in reversed(remove_idx):
+            pose_results.pop(idx)
+
+        # person identification
+        pose_results, self.next_id = get_track_id(pose_results,
+                                                  self.pose_results_last,
+                                                  self.next_id,
+                                                  use_oks=False,
+                                                  tracking_thr=TRACKING_THR,
+                                                  use_one_euro=True,
+                                                  fps=fps)
+        
+    
+
+        for pose_result in pose_results:
             _id = pose_result['track_id']
             xyxy = pose_result['bbox']
             bbox = self.xyxy_to_cxcys(xyxy)
-            
+
             self.tracking_results['id'].append(_id)
             self.tracking_results['frame_id'].append(self.frame_id)
             self.tracking_results['bbox'].append(bbox)
             self.tracking_results['keypoints'].append(pose_result['keypoints'])
-        
+
         self.frame_id += 1
         self.pose_results_last = pose_results
-        
+
     def process(self, fps):
         for key in ['id', 'frame_id', 'keypoints']:
             self.tracking_results[key] = np.array(self.tracking_results[key])
         self.compute_bboxes_from_keypoints()
-            
+
         output = defaultdict(dict)
         ids = np.unique(self.tracking_results['id'])
         for _id in ids:
@@ -131,16 +175,19 @@ class DetectionModel(object):
             for key, val in self.tracking_results.items():
                 if key == 'id': continue
                 output[_id][key] = val[idxs]
-        
+
         # Smooth bounding box detection
         ids = list(output.keys())
         for _id in ids:
             if len(output[_id]['bbox']) < MINIMUM_FRMAES:
                 del output[_id]
                 continue
-            
-            kernel = int(int(fps/2) / 2) * 2 + 1
-            smoothed_bbox = np.array([signal.medfilt(param, kernel) for param in output[_id]['bbox'].T]).T
+
+            kernel = int(int(fps / 2) / 2) * 2 + 1
+            smoothed_bbox = np.array([
+                signal.medfilt(param, kernel)
+                for param in output[_id]['bbox'].T
+            ]).T
             output[_id]['bbox'] = smoothed_bbox
-        
+
         return output
