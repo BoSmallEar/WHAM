@@ -25,10 +25,9 @@ VIT_DIR = osp.join(ROOT_DIR, "third-party/ViTPose")
 
 VIS_THRESH = 0.3
 BBOX_CONF = 0.5
-TRACKING_THR = 0.1
-MINIMUM_FRMAES = 30
+TRACKING_THR = 0.5
+MINIMUM_FRMAES = 60
 MINIMUM_JOINTS = 6
-MINIMUM_JOINTS_2 = 15
 
 
 class DetectionModel(object):
@@ -47,7 +46,7 @@ class DetectionModel(object):
                                           device=device.lower())
 
         # YOLO
-        bbox_model_ckpt = osp.join(ROOT_DIR, 'checkpoints', 'yolov8x-seg.pt')
+        bbox_model_ckpt = osp.join(ROOT_DIR, 'checkpoints', 'yolov8x-pose.pt')
         self.bbox_model = YOLO(bbox_model_ckpt)
 
         self.device = device
@@ -63,6 +62,7 @@ class DetectionModel(object):
             'bbox': [],
             'keypoints': []
         }
+
 
     def xyxy_to_cxcys(self, bbox, s_factor=1.05):
         cx, cy = bbox[[0, 2]].mean(), bbox[[1, 3]].mean()
@@ -103,7 +103,7 @@ class DetectionModel(object):
         bboxes = [{'bbox': bbox} for bbox in bboxes]
         if results.masks is not None:
             masks = results.masks.xy
-    
+
 
         # keypoints detection
         pose_results, returned_outputs = inference_top_down_pose_model(
@@ -121,18 +121,9 @@ class DetectionModel(object):
             if n_valid < MINIMUM_JOINTS:
                 remove_idx.append(i) 
                 continue
-            mask = masks[i].astype(int)
-            real_mask = np.zeros([img.shape[0], img.shape[1]], dtype=np.uint8)
-            if mask.shape[0] == 0:
-                remove_idx.append(i) 
-                continue
-            cv2.drawContours(real_mask,[mask],-1,255,cv2.FILLED)
-            real_mask = real_mask.astype(bool)
-            pose_result_int = pose_result['keypoints'][:, :-1].astype(int)
-            pose_result_int_mask = reduce(np.logical_and,[pose_result_int[..., 1]>=0, pose_result_int[...,1]<img.shape[0], pose_result_int[...,0]>=0, pose_result_int[..., 0]<img.shape[1]])
-            pose_result_int = pose_result_int[pose_result_int_mask]
-            n_valid = (real_mask[pose_result_int[..., 1], pose_result_int[..., 0]]).sum()
-            if n_valid < MINIMUM_JOINTS_2:
+            conf = results.keypoints.conf[i]
+
+            if conf[-2]<0.8 and conf[-1]<0.8:
                 remove_idx.append(i) 
         
         for idx in reversed(remove_idx):
