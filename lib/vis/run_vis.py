@@ -8,7 +8,7 @@ import numpy as np
 from progress.bar import Bar
 
 from lib.vis.renderer import Renderer, get_global_cameras
-from lib.utils.transforms import axis_angle_to_matrix
+from lib.utils.transforms import axis_angle_to_matrix, matrix_to_axis_angle
 from lib.utils.colors import get_colors
 
 
@@ -82,12 +82,31 @@ def run_vis_on_demo_global(cfg, video, result, output_pth, smpl, id):
 
      
         
+    ## suppose we want to use the 0th frame as the starting frame  
+    START_FRAME = 0
+
+    global_orient_source = axis_angle_to_matrix(tt(result['pose_world'][START_FRAME, :3]))
+    global_orient_target = axis_angle_to_matrix(tt(result['pose'][START_FRAME, :3]))
+
+    source_to_target_rotation =  global_orient_target @ global_orient_source.T
+    global_orient= axis_angle_to_matrix(tt(result['pose_world'][START_FRAME:, :3]))
+    global_orient = matrix_to_axis_angle(source_to_target_rotation @ global_orient)
+
+    transl_source = tt(result['trans_world'][[START_FRAME]]) 
+    transl_target = tt(result['trans'][[START_FRAME]])
+    source_to_target_translation = transl_target.T - source_to_target_rotation@transl_source.T
+    transl = tt(result['trans_world'][START_FRAME:])  
+    transl = source_to_target_rotation @ transl.T + source_to_target_translation
+    transl = transl.T
+
+
+        
     global_output = smpl.get_output(
-        body_pose=tt(result['pose_world'][:, 3:]),
-        global_orient=tt(result['pose_world'][:, :3]),
-        betas=tt(result['betas']),
-        transl=tt(result['trans_world']) +
-        tt(result['trans'][[0]]))
+        body_pose=tt(result['pose_world'][START_FRAME:, 3:]),
+        global_orient=global_orient,
+        betas=tt(result['betas'][START_FRAME:]),
+        transl= transl)
+    
     verts_glob = global_output.vertices.cpu()
     result['verts_glob'] = verts_glob
 

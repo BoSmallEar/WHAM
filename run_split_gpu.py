@@ -14,7 +14,7 @@ def run(file, log_file):
     gpu = GPUS[worker_id % len(GPUS)]
     cmd = (
         f"CUDA_VISIBLE_DEVICES={gpu} "
-        f"python demo.py  --output_pth experiments/filter_results_0313 --video {file} --save_pkl"
+        f"python demo.py  --output_pth experiments/filter_results_0313 --video {file} --save_pkl --visualize"
     )
     # cmd = (
     #     f"CUDA_VISIBLE_DEVICES={gpu} "
