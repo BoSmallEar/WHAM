@@ -174,11 +174,11 @@ class DetectionModel(object):
                 del output[_id]
                 continue
 
-            kernel = int(int(fps / 2) / 2) * 2 + 1
-            smoothed_bbox = np.array([
-                signal.medfilt(param, kernel)
-                for param in output[_id]['bbox'].T
-            ]).T
-            output[_id]['bbox'] = smoothed_bbox
+            # kernel = int(int(fps / 2) / 2) * 2 + 1
+            # smoothed_bbox = np.array([
+            #     signal.medfilt(param, kernel)
+            #     for param in output[_id]['bbox'].T
+            # ]).T
+            # output[_id]['bbox'] = smoothed_bbox
 
         return output
