@@ -100,44 +100,44 @@ def run(cfg,
     # mask_results = joblib.load(osp.join(output_pth, 'mask_results.pth'))
 
 
-    # if not osp.exists(osp.join(output_pth, 'wham_output.pkl')):
-    # Build dataset
-    dataset = CustomDataset(cfg, tracking_results, slam_results, width, height, fps)
+    if not osp.exists(osp.join(output_pth, 'wham_output.pkl')):
+        # Build dataset
+        dataset = CustomDataset(cfg, tracking_results, slam_results, width, height, fps)
 
-    # run WHAM
-    results = defaultdict(dict)
+        # run WHAM
+        results = defaultdict(dict)
 
-    for batch in dataset:
-        if batch is None: break
+        for batch in dataset:
+            if batch is None: break
 
-        # data
-        _id, x, inits, features, mask, init_root, cam_angvel, frame_id, kwargs = batch
+            # data
+            _id, x, inits, features, mask, init_root, cam_angvel, frame_id, kwargs = batch
 
-        # inference
-        pred = network(x, inits, features, mask=mask, init_root=init_root, cam_angvel=cam_angvel, return_y_up=False, **kwargs)
+            # inference
+            pred = network(x, inits, features, mask=mask, init_root=init_root, cam_angvel=cam_angvel, return_y_up=False, **kwargs)
 
-        # ========= Store results ========= #
-        pred_body_pose = matrix_to_axis_angle(pred['poses_body']).cpu().numpy().reshape(-1, 69)
-        pred_root = matrix_to_axis_angle(pred['poses_root_cam']).cpu().numpy().reshape(-1, 3)
-        pred_root_world = matrix_to_axis_angle(pred['poses_root_world']).cpu().numpy().reshape(-1, 3)
-        pred_pose = np.concatenate((pred_root, pred_body_pose), axis=-1)
-        pred_pose_world = np.concatenate((pred_root_world, pred_body_pose), axis=-1)
-        pred_trans = (pred['trans_cam'] - network.output.offset).cpu().numpy()
-        
-        results[_id]['pose'] = pred_pose
-        results[_id]['trans'] = pred['trans_cam'].cpu().numpy()
-        results[_id]['trans-offset'] = pred_trans
-        results[_id]['pose_world'] = pred_pose_world
-        results[_id]['trans_world'] = pred['trans_world'].cpu().squeeze(0).numpy()
-        results[_id]['betas'] = pred['betas'].cpu().squeeze(0).numpy()
-        results[_id]['verts'] = (pred['verts_cam'] + pred['trans_cam'].unsqueeze(1)).cpu().numpy()
-        results[_id]['frame_ids'] = frame_id
+            # ========= Store results ========= #
+            pred_body_pose = matrix_to_axis_angle(pred['poses_body']).cpu().numpy().reshape(-1, 69)
+            pred_root = matrix_to_axis_angle(pred['poses_root_cam']).cpu().numpy().reshape(-1, 3)
+            pred_root_world = matrix_to_axis_angle(pred['poses_root_world']).cpu().numpy().reshape(-1, 3)
+            pred_pose = np.concatenate((pred_root, pred_body_pose), axis=-1)
+            pred_pose_world = np.concatenate((pred_root_world, pred_body_pose), axis=-1)
+            pred_trans = (pred['trans_cam'] - network.output.offset).cpu().numpy()
+            
+            results[_id]['pose'] = pred_pose
+            results[_id]['trans'] = pred['trans_cam'].cpu().numpy()
+            results[_id]['trans-offset'] = pred_trans
+            results[_id]['pose_world'] = pred_pose_world
+            results[_id]['trans_world'] = pred['trans_world'].cpu().squeeze(0).numpy()
+            results[_id]['betas'] = pred['betas'].cpu().squeeze(0).numpy()
+            results[_id]['verts'] = (pred['verts_cam'] + pred['trans_cam'].unsqueeze(1)).cpu().numpy()
+            results[_id]['frame_ids'] = frame_id
 
 
-        if save_pkl:
-            joblib.dump(results, osp.join(output_pth, "wham_output.pkl"))
-    # else:
-    #     results = joblib.load(osp.join(output_pth, "wham_output.pkl"))
+            if save_pkl:
+                joblib.dump(results, osp.join(output_pth, "wham_output.pkl"))
+    else:
+        results = joblib.load(osp.join(output_pth, "wham_output.pkl"))
 
     # Visualize
     if visualize:
